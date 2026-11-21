@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ฮีโร่พิทักษ์หมู่บ้าน</title>
+<link href="https://fonts.googleapis.com/css2?family=Mitr:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none}
+body{font-family:'Mitr',sans-serif;background:linear-gradient(#8fd3ff,#c8f7c5);min-height:100vh;display:flex;justify-content:center}
+#app{width:100%;max-width:480px;min-height:100vh;padding:16px;display:flex;flex-direction:column;align-items:center}
+h1{font-size:28px;color:#1b4965;text-align:center;margin:12px 0}
+h2{font-size:22px;color:#1b4965;text-align:center;margin:8px 0}
+p{font-size:17px;text-align:center;margin:6px 0;color:#333}
+.btn{background:#ff9f1c;color:#fff;border:none;border-radius:16px;padding:14px 24px;font-size:20px;font-family:inherit;margin:8px;box-shadow:0 5px 0 #c97800;cursor:pointer;min-width:200px}
+.btn:active{transform:translateY(4px);box-shadow:0 1px 0 #c97800}
+.btn.green{background:#2ec4b6;box-shadow:0 5px 0 #1a8a80}
+.btn.red{background:#e71d36;box-shadow:0 5px 0 #a0101f}
+.btn.gray{background:#8d99ae;box-shadow:0 5px 0 #5c677d}
+.btn.small{font-size:14px;padding:8px 14px;min-width:0}
+.big{font-size:90px;text-align:center;margin:10px}
+.map{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;margin-top:10px}
+.stage{background:#fff;border-radius:18px;padding:14px;text-align:center;box-shadow:0 4px 10px #0002;cursor:pointer}
+.stage.locked{opacity:.45;cursor:not-allowed}
+.stage .ic{font-size:44px}
+.stage .nm{font-size:16px;font-weight:600}
+.stage .st{font-size:18px;color:#f4a100}
+.boss{grid-column:span 2}
+.hud{display:flex;justify-content:space-between;width:100%;font-size:18px;background:#fff9;border-radius:12px;padding:8px 12px;margin-bottom:8px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%;margin:8px 0}
+.cell{background:#fff;border-radius:16px;font-size:44px;text-align:center;padding:12px 4px;box-shadow:0 3px 8px #0002;cursor:pointer;position:relative}
+.cell small{display:block;font-size:13px;color:#555}
+.cell.sel{background:#d4f8d4;outline:4px solid #2ec4b6}
+.cell.ok{background:#b8f2b8}
+.cell.bad{background:#ffc9c9;animation:shake .3s}
+@keyframes shake{25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+.card{background:#fff;border-radius:20px;padding:18px;width:100%;box-shadow:0 6px 14px #0003;margin:10px 0}
+.card h3{color:#e71d36;text-align:center;font-size:22px}
+.card li{margin:6px 0 6px 20px;font-size:16px}
+.row{display:flex;flex-wrap:wrap;justify-content:center}
+.bar{width:100%;height:22px;background:#ddd;border-radius:11px;overflow:hidden;margin:6px 0}
+.bar div{height:100%;background:#e71d36;transition:width .4s}
+.choice{width:100%;background:#fff;border:3px solid #1b4965;border-radius:14px;padding:12px;font-size:18px;font-family:inherit;margin:6px 0;cursor:pointer}
+.choice.ok{background:#b8f2b8;border-color:#2a9d8f}
+.choice.bad{background:#ffc9c9;border-color:#e71d36}
+.toast{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%);font-size:70px;pointer-events:none;animation:pop .7s forwards;z-index:9}
+@keyframes pop{0%{opacity:0;transform:translate(-50%,-50%) scale(.5)}30%{opacity:1;transform:translate(-50%,-50%) scale(1.2)}100%{opacity:0;transform:translate(-50%,-80%) scale(1)}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const app = document.getElementById('app');
+let save = JSON.parse(localStorage.getItem('heroSave') || '{"stars":[0,0,0,0,0]}');
+function saveGame(){ localStorage.setItem('heroSave', JSON.stringify(save)); }
+
+/* ---------- ระบบเสียงและเอฟเฟกต์ ---------- */
+let ac;
+function beep(ok){
+  try{
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = ok ? 'sine' : 'square'; o.frequency.value = ok ? 880 : 200;
+    g.gain.value = .15; o.connect(g); g.connect(ac.destination); o.start();
+    g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + .3); o.stop(ac.currentTime + .3);
+  }catch(e){}
+}
+function toast(t){ const d=document.createElement('div'); d.className='toast'; d.textContent=t; document.body.appendChild(d); setTimeout(()=>d.remove(),700); }
+function shuffle(a){ return a.map(v=>[Math.random(),v]).sort((x,y)=>x[0]-y[0]).map(v=>v[1]); }
+let timer = null;
+function stopTimer(){ if(timer){ clearInterval(timer); timer=null; } }
+function render(html){ app.innerHTML = html; window.scrollTo(0,0); }
+function shake(d){ d.classList.remove('bad'); void d.offsetWidth; d.classList.add('bad'); }
+
+/* ---------- ข้อมูลด่านและการ์ดความรู้ ---------- */
+const LEVELS = [
+  {icon:'🏠', name:'บ้าน',        disease:'ไข้หวัด',           play:level1},
+  {icon:'🏫', name:'โรงเรียน',    disease:'ตาแดง / มือเท้าปาก', play:level2},
+  {icon:'🌳', name:'สวนหลังบ้าน', disease:'ไข้เลือดออก',        play:level3},
+  {icon:'🍱', name:'โรงอาหาร',    disease:'อาหารเป็นพิษ',       play:level4},
+  {icon:'👾', name:'บอสเชื้อโรค', disease:'ทบทวนทุกโรค',        play:level5}
+];
+const INTRO = [
+  'คุณแม่เป็นหวัด! ช่วยแตะขั้นตอน "การล้างมือ" ให้ถูกลำดับ เพื่อไม่ให้เชื้อหวัดแพร่ไปหาคนอื่น',
+  'เพื่อนเป็นตาแดง! ช่วยตัดสินว่าของแต่ละชิ้น "ใช้ร่วมกันได้" หรือ "ห้ามใช้ร่วมกัน"',
+  'ยุงลายกำลังวางไข่! แตะแหล่งน้ำขังที่มีลูกน้ำให้หมดภายใน 20 วินาที ระวังอย่าแตะสิ่งที่ไม่ใช่แหล่งน้ำขัง',
+  'ช่วยแตะเลือกอาหารที่ "ปลอดภัย" ให้ครบทุกอย่าง แล้วกดปุ่มส่งอาหาร',
+  'บอสเชื้อโรคมาแล้ว! ตอบคำถามให้ถูกเพื่อโจมตีบอส ถ้าตอบผิดจะเสียหัวใจ ❤️'
+];
+const CARDS = [
+  {icon:'🤧', name:'ไข้หวัด', how:'ละอองน้ำมูก น้ำลาย จากการไอ จาม', sym:'มีไข้ ไอ จาม น้ำมูกไหล เจ็บคอ',
+   pre:['ล้างมือด้วยสบู่บ่อยๆ','ปิดปากและจมูกเวลาไอหรือจาม','สวมหน้ากากอนามัยเมื่อป่วย']},
+  {icon:'👁️', name:'ตาแดง และ มือเท้าปาก', how:'สัมผัสมือ สิ่งของ หรือน้ำมูกน้ำลายของผู้ป่วย', sym:'ตาแดง คัน น้ำตาไหล / มีไข้ แผลในปาก ผื่นที่มือและเท้า',
+   pre:['ไม่ใช้ผ้าเช็ดหน้า แก้วน้ำ ช้อน ร่วมกับผู้อื่น','ไม่ขยี้ตา','ล้างมือบ่อยๆ']},
+  {icon:'🦟', name:'ไข้เลือดออก', how:'ยุงลายที่มีเชื้อกัด', sym:'ไข้สูงลอย 2–7 วัน ปวดหัว ปวดเมื่อย อาจมีจุดเลือดออก',
+   pre:['ปิดฝาโอ่งน้ำ','คว่ำภาชนะที่มีน้ำขัง','เปลี่ยนน้ำแจกันทุก 7 วัน','นอนในมุ้ง ทายากันยุง']},
+  {icon:'🤢', name:'อาหารเป็นพิษ / อุจจาระร่วง', how:'กินอาหารหรือน้ำที่มีเชื้อโรค', sym:'ปวดท้อง คลื่นไส้ อาเจียน ถ่ายเหลว',
+   pre:['กินร้อน ใช้ช้อนกลาง','ล้างมือก่อนกินอาหารและหลังเข้าห้องน้ำ','ดื่มน้ำสะอาด','ไม่กินอาหารบูดหรือขึ้นรา']},
+  {icon:'🏆', name:'ฮีโร่สุขภาพ', msg:'ยินดีด้วย! คุณปกป้องหมู่บ้านจากเชื้อโรคได้สำเร็จ', label:'สิ่งที่ฮีโร่ทำทุกวัน',
+   pre:['ล้างมือให้สะอาด','กินร้อน ใช้ช้อนกลาง','ไม่ใช้ของส่วนตัวร่วมกัน','กำจัดแหล่งน้ำขัง','ออกกำลังกาย นอนหลับพอ']}
+];
+function cardHTML(c){
+  return `<div class="card"><div class="big" style="font-size:60px;margin:0">${c.icon}</div><h3>${c.name}</h3>
+  ${c.msg ? `<p>${c.msg}</p>` : ''}
+  ${c.how ? `<p><b>ติดต่อทาง:</b> ${c.how}</p>` : ''}
+  ${c.sym ? `<p><b>อาการ:</b> ${c.sym}</p>` : ''}
+  <p><b>${c.label || 'วิธีป้องกัน'}:</b></p><ul>${c.pre.map(x=>`<li>${x}</li>`).join('')}</ul></div>`;
+}
+
+/* ---------- หน้าจอหลัก ---------- */
+function home(){
+  stopTimer();
+  render(`<h1>🦸 ฮีโร่พิทักษ์หมู่บ้าน 🦠</h1><div class="big">🏘️</div>
+  <p>เชื้อโรคบุกหมู่บ้าน! มาช่วยกันปกป้องทุกคนกันเถอะ</p>
+  <button class="btn" onclick="showMap()">▶ เริ่มเล่น</button>
+  <button class="btn green" onclick="book()">📖 สมุดการ์ดความรู้</button>
+  <button class="btn gray" onclick="howto()">❓ วิธีเล่น</button>`);
+}
+function showMap(){
+  stopTimer();
+  const total = save.stars.reduce((a,b)=>a+b,0);
+  let h = `<h2>🗺️ แผนที่หมู่บ้าน</h2><p>ดาวรวม ⭐ ${total} / 15</p><div class="map">`;
+  LEVELS.forEach((L,i)=>{
+    const open = i===0 || save.stars[i-1] > 0;
+    h += `<div class="stage ${open?'':'locked'} ${i===4?'boss':''}" ${open?`onclick="startLevel(${i})"`:''}>
+      <div class="ic">${open?L.icon:'🔒'}</div><div class="nm">ด่าน ${i+1}: ${L.name}</div>
+      <small>${L.disease}</small><div class="st">${'⭐'.repeat(save.stars[i])}${'☆'.repeat(3-save.stars[i])}</div></div>`;
+  });
+  h += `</div><button class="btn gray" onclick="home()">🏠 หน้าแรก</button>`;
+  render(h);
+}
+function book(){
+  let h = `<h2>📖 สมุดการ์ดความรู้</h2>`;
+  CARDS.forEach((c,i)=>{
+    h += save.stars[i] > 0 ? cardHTML(c)
+      : `<div class="card"><div class="big" style="font-size:50px;margin:0">❓</div><p>ผ่านด่าน ${i+1} เพื่อปลดล็อกการ์ดนี้</p></div>`;
+  });
+  h += `<button class="btn gray" onclick="home()">🏠 หน้าแรก</button>`;
+  render(h);
+}
+function howto(){
+  render(`<h2>❓ วิธีเล่น</h2><div class="card"><ul>
+  <li>เลือกด่านบนแผนที่หมู่บ้าน ผ่านด่านแล้วด่านต่อไปจะเปิด</li>
+  <li>ยิ่งทำผิดน้อย ยิ่งได้ดาวมาก ⭐⭐⭐</li>
+  <li>ผ่านด่านแล้วจะได้การ์ดความรู้ อ่านซ้ำได้ใน "สมุดการ์ด"</li>
+  <li>ด่านสุดท้ายต้องตอบคำถามเพื่อสู้กับบอสเชื้อโรค!</li></ul></div>
+  <button class="btn" onclick="home()">เข้าใจแล้ว!</button>
+  <button class="btn gray small" onclick="resetAll()">🗑️ ล้างข้อมูลเริ่มเล่นใหม่</button>`);
+}
+function resetAll(){
+  if(confirm('ต้องการล้างดาวและการ์ดทั้งหมดใช่ไหม?')){ save={stars:[0,0,0,0,0]}; saveGame(); home(); }
+}
+function startLevel(i){
+  stopTimer();
+  const L = LEVELS[i];
+  render(`<h2>ด่าน ${i+1}: ${L.name}</h2><div class="big">${L.icon}</div>
+  <div class="card"><p>${INTRO[i]}</p></div>
+  <button class="btn" onclick="LEVELS[${i}].play(${i})">เริ่มเลย!</button>
+  <button class="btn gray" onclick="showMap()">กลับ</button>`);
+}
+function finish(i, stars){
+  stopTimer();
+  if(stars > save.stars[i]){ save.stars[i] = stars; saveGame(); }
+  render(`<h2>${stars>0 ? '🎉 ผ่านด่านแล้ว!' : '😢 ยังไม่ผ่าน ลองใหม่นะ'}</h2>
+  <div class="big" style="font-size:50px">${'⭐'.repeat(stars)}${'☆'.repeat(3-stars)}</div>
+  ${stars>0 ? `<p>ได้รับการ์ดความรู้!</p>${cardHTML(CARDS[i])}` : ''}
+  <div class="row">
+    ${stars>0 && i<4 ? `<button class="btn green" onclick="startLevel(${i+1})">ด่านต่อไป ▶</button>` : ''}
+    <button class="btn" onclick="startLevel(${i})">🔄 เล่นอีกครั้ง</button>
+    <button class="btn gray" onclick="showMap()">🗺️ แผนที่</button>
+  </div>`);
+}
+function starsByMiss(m){ return m===0 ? 3 : m<=2 ? 2 : 1; }
+
+/* ---------- ด่าน 1: เรียงขั้นตอนล้างมือ ---------- */
+function level1(i){
+  const steps = [['💧','ทำมือให้เปียก'],['🧼','ถูสบู่'],['👐','ถูมือให้ทั่ว 20 วินาที'],['🚿','ล้างด้วยน้ำสะอาด'],['🧻','เช็ดมือให้แห้ง']];
+  let next = 0, miss = 0;
+  render(`<div class="hud"><span>🏠 ด่าน 1</span><span id="miss">❌ 0</span></div>
+  <h2>แตะขั้นตอนล้างมือตามลำดับ</h2><p id="prog">ขั้นที่ 1 คืออะไร?</p><div class="grid" id="g"></div>`);
+  const g = document.getElementById('g');
+  shuffle([0,1,2,3,4]).forEach(k=>{
+    const d = document.createElement('div');
+    d.className = 'cell'; d.innerHTML = `${steps[k][0]}<small>${steps[k][1]}</small>`;
+    d.onclick = ()=>{
+      if(d.classList.contains('ok') || next >= steps.length) return;
+      if(k === next){
+        d.classList.add('ok');
+        d.innerHTML += `<b style="position:absolute;top:4px;left:10px;font-size:20px;color:#1b4965">${next+1}</b>`;
+        beep(1); next++;
+        if(next === steps.length){ toast('👏'); setTimeout(()=>finish(i, starsByMiss(miss)), 800); }
+        else document.getElementById('prog').textContent = `ขั้นที่ ${next+1} คืออะไร?`;
+      } else {
+        miss++; beep(0); shake(d);
+        document.getElementById('miss').textContent = '❌ ' + miss;
+      }
+    };
+    g.appendChild(d);
+  });
+}
+
+/* ---------- ด่าน 2: ของใช้ร่วมกันได้หรือไม่ ---------- */
+function level2(i){
+  const items = shuffle([
+    ['🪥','แปรงสีฟัน',0],['🥤','แก้วน้ำ',0],['🥄','ช้อนที่ใช้แล้ว',0],['🧣','ผ้าเช็ดหน้า',0],['🛏️','ปลอกหมอน',0],
+    ['⚽','ลูกบอล',1],['📚','หนังสือห้องสมุด',1],['🪑','เก้าอี้',1],['🧩','ตัวต่อ',1],['🎹','เปียโน',1]
+  ]);
+  let n = 0, miss = 0;
+  function show(){
+    if(n >= items.length) return finish(i, miss===0?3 : miss<=2?2 : miss<=4?1 : 0);
+    const it = items[n]; let lock = false;
+    render(`<div class="hud"><span>🏫 ด่าน 2</span><span>${n+1}/${items.length}</span><span>❌ ${miss}</span></div>
+    <h2>ของชิ้นนี้ใช้ร่วมกับเพื่อนได้ไหม?</h2>
+    <div class="cell" style="width:70%;font-size:90px;margin:16px 0">${it[0]}<small style="font-size:20px">${it[1]}</small></div>
+    <div class="row"><button class="btn green" id="b1">👍 ใช้ร่วมกันได้</button><button class="btn red" id="b0">🙅 ห้ามใช้ร่วมกัน</button></div>`);
+    const ans = a=>{
+      if(lock) return; lock = true;
+      const ok = a === it[2]; beep(ok); toast(ok ? '✅' : '❌');
+      if(!ok) miss++; n++; setTimeout(show, 650);
+    };
+    document.getElementById('b1').onclick = ()=>ans(1);
+    document.getElementById('b0').onclick = ()=>ans(0);
+  }
+  show();
+}
+
+/* ---------- ด่าน 3: กำจัดแหล่งน้ำขัง (จับเวลา) ---------- */
+function level3(i){
+  const bad = [['🏺','โอ่งไม่ปิดฝา','ปิดฝาแล้ว'],['🥥','กะลามีน้ำขัง','คว่ำแล้ว'],['💐','แจกันน้ำเก่า','เปลี่ยนน้ำแล้ว'],
+               ['🪣','ถังน้ำเปิดฝา','ปิดฝาแล้ว'],['🥫','กระป๋องมีน้ำขัง','ทิ้งแล้ว'],['🛁','อ่างน้ำเก่า','เทน้ำแล้ว']];
+  const good = [['🌳','ต้นไม้'],['🪨','ก้อนหิน'],['🐔','ไก่'],['🌻','ดอกไม้'],['🧸','ตุ๊กตา'],['🚲','จักรยาน']];
+  const all = shuffle([...bad.map(d=>({w:1,d})), ...good.map(d=>({w:0,d}))]);
+  let t = 20, done = 0, miss = 0, over = false;
+  render(`<div class="hud"><span>🌳 ด่าน 3</span><span id="t">⏰ 20</span><span id="c">🦟 0/6</span></div>
+  <h2>แตะแหล่งน้ำขังที่มีลูกน้ำยุงลาย!</h2><div class="grid" id="g"></div>`);
+  const g = document.getElementById('g');
+  all.forEach(o=>{
+    const d = document.createElement('div');
+    d.className = 'cell'; d.innerHTML = `${o.d[0]}<small>${o.d[1]}</small>`;
+    d.onclick = ()=>{
+      if(over || d.classList.contains('ok')) return;
+      if(o.w){
+        d.classList.add('ok'); d.innerHTML = `✅<small>${o.d[2]}</small>`; beep(1); done++;
+        document.getElementById('c').textContent = `🦟 ${done}/6`;
+        if(done === 6){ over = true; stopTimer(); toast('🎉');
+          setTimeout(()=>finish(i, miss===0 && t>=8 ? 3 : miss<=2 ? 2 : 1), 800); }
+      } else { miss++; beep(0); shake(d); }
+    };
+    g.appendChild(d);
+  });
+  timer = setInterval(()=>{
+    t--; document.getElementById('t').textContent = '⏰ ' + t;
+    if(t <= 0){ over = true; stopTimer(); toast('⏰'); setTimeout(()=>finish(i, 0), 800); }
+  }, 1000);
+}
+
+/* ---------- ด่าน 4: เลือกอาหารปลอดภัย ---------- */
+function level4(i){
+  const foods = shuffle([
+    ['🍲','แกงร้อนๆ',1],['🍳','ไข่ทอดสุก',1],['🍚','ข้าวสวยร้อน',1],['🍌','กล้วยปอกใหม่',1],['🥛','นมไม่หมดอายุ',1],
+    ['🥩','หมูดิบ',0],['🪰','อาหารมีแมลงวันตอม',0],['🥫','กระป๋องบวม',0],['🍞','ขนมปังขึ้นรา',0]
+  ]);
+  render(`<div class="hud"><span>🍱 ด่าน 4</span><span>เลือกอาหารปลอดภัย</span></div>
+  <h2>แตะเลือกอาหารที่ปลอดภัยให้ครบ</h2><div class="grid" id="g"></div>
+  <button class="btn green" id="send">🍽️ ส่งอาหาร</button>`);
+  const g = document.getElementById('g'); const cells = [];
+  foods.forEach(f=>{
+    const d = document.createElement('div');
+    d.className = 'cell'; d.innerHTML = `${f[0]}<small>${f[1]}</small>`;
+    d.onclick = ()=>{ d.classList.toggle('sel'); beep(1); };
+    g.appendChild(d); cells.push([d,f]);
+  });
+  document.getElementById('send').onclick = function(){
+    this.disabled = true; let err = 0;
+    cells.forEach(([d,f])=>{
+      const s = d.classList.contains('sel');
+      if(s !== !!f[2]) err++;
+      d.onclick = null; d.classList.remove('sel'); d.classList.add(f[2] ? 'ok' : 'bad');
+    });
+    this.textContent = err===0 ? 'เก่งมาก! ✅ คืออาหารปลอดภัย' : `ผิด ${err} ข้อ ✅ คืออาหารปลอดภัย`;
+    toast(err===0 ? '🎉' : '🤔');
+    setTimeout(()=>finish(i, err===0?3 : err<=2?2 : err<=4?1 : 0), 2500);
+  };
+}
+
+/* ---------- ด่าน 5: สู้บอสด้วยคำถาม ---------- */
+function level5(i){
+  const Q = shuffle([
+    {q:'ไข้เลือดออกติดต่อได้อย่างไร?', a:['ถูกยุงลายที่มีเชื้อกัด','กินอาหารรสเผ็ด','เดินตากฝน']},
+    {q:'ควรถูมือด้วยสบู่นานประมาณเท่าไร?', a:['อย่างน้อย 20 วินาที','2 วินาที','ไม่ต้องถู แค่ล้างน้ำ']},
+    {q:'เวลาไอหรือจามควรทำอย่างไร?', a:['ใช้ทิชชูหรือข้อพับแขนปิดปาก','จามใส่หน้าเพื่อน','ใช้มือปิดแล้วไปจับของต่อ']},
+    {q:'ข้อใดช่วยป้องกันอาหารเป็นพิษ?', a:['กินร้อน ใช้ช้อนกลาง','กินอาหารค้างคืนโดยไม่อุ่น','ใช้ช้อนตัวเองตักกับข้าว']},
+    {q:'ควรเปลี่ยนน้ำในแจกันบ่อยแค่ไหน?', a:['ทุก 7 วัน','เดือนละครั้ง','ไม่ต้องเปลี่ยนเลย']},
+    {q:'เพื่อนเป็นตาแดง เราควรทำอย่างไร?', a:['ไม่ใช้ผ้าเช็ดหน้าร่วมกับเพื่อน','ขอยืมผ้าเช็ดหน้าเพื่อน','ขยี้ตาบ่อยๆ']},
+    {q:'อาการของโรคมือเท้าปากคือข้อใด?', a:['มีไข้ แผลในปาก ผื่นที่มือและเท้า','ผมร่วง','ปวดหลัง']},
+    {q:'ข้อใดทำให้ร่างกายแข็งแรง ไม่ป่วยง่าย?', a:['ออกกำลังกาย นอนหลับให้พอ','นอนดึกเล่นเกม','กินขนมแทนข้าว']},
+    {q:'ควรล้างมือเมื่อไร?', a:['ก่อนกินอาหารและหลังเข้าห้องน้ำ','เฉพาะตอนอาบน้ำ','ไม่ต้องล้างก็ได้']}
+  ]);
+  let boss = 5, hp = 3, n = 0;
+  function show(){
+    if(boss <= 0) return finish(i, hp);
+    if(hp <= 0 || n >= Q.length) return finish(i, 0);
+    const q = Q[n]; let lock = false;
+    const opts = shuffle(q.a.map((t,k)=>({t, ok:k===0})));
+    render(`<div class="hud"><span>${'❤️'.repeat(hp)}${'🖤'.repeat(3-hp)}</span><span>ข้อ ${n+1}</span></div>
+    <div class="big" style="font-size:${50+boss*10}px;margin:0">👾</div>
+    <div class="bar"><div style="width:${boss*20}%"></div></div><p>พลังบอส ${boss}/5</p>
+    <div class="card"><h2 style="font-size:19px">${q.q}</h2><div id="o"></div></div>`);
+    const o = document.getElementById('o');
+    opts.forEach(op=>{
+      const b = document.createElement('button');
+      b.className = 'choice'; b.textContent = op.t;
+      b.onclick = ()=>{
+        if(lock) return; lock = true;
+        if(op.ok){ b.classList.add('ok'); boss--; beep(1); toast('💥'); }
+        else {
+          b.classList.add('bad'); hp--; beep(0); toast('💔');
+          [...o.children].forEach((c,k)=>{ if(opts[k].ok) c.classList.add('ok'); });
+        }
+        n++; setTimeout(show, op.ok ? 900 : 1800);
+      };
+      o.appendChild(b);
+    });
+  }
+  show();
+}
+
+home();
+</script>
+</body>
+</html>
